@@ -92,13 +92,8 @@ public class Sqlite implements Closeable {
     private static String cleanMySqlForSqlite(String tableQuery, String tableName, List<String> indices) {
         String foreignKey;
 
-
         tableQuery = tableQuery.toLowerCase();
         tableQuery = tableQuery.replaceAll(" text", " memo");
-
-//      //biarkan pakai integer id nya
-//        tableQuery = tableQuery.replaceAll("`id` int\\(.+\\)", "`id` text(255)");
-//        tableQuery = tableQuery.replaceAll("`id` integer\\(.+\\)", "`id` text(255)");
         tableQuery = tableQuery.replaceAll("int\\(\\d+\\)", "integer");
         tableQuery = tableQuery.replace("auto_increment", "");
         tableQuery = tableQuery.replaceAll("decimal\\(\\d+,\\d\\)", "real");
@@ -131,13 +126,6 @@ public class Sqlite implements Closeable {
                     foreignKey += " on update cascade";
                 }
 
-                Pattern pattern1 = Pattern.compile("\\(`[a-zA-Z_]+`\\)");
-                Matcher matcher1 = pattern1.matcher(foreignKey);
-                while (matcher1.find()) {
-                    String tempField = matcher1.group(0);
-                    break;
-                }
-
                 tableQuery = tableQuery.replace(result, foreignKey);
             }
         }
@@ -162,16 +150,6 @@ public class Sqlite implements Closeable {
         while (matcher.find()) {
             tableQuery = tableQuery.replaceAll("\\n\\n+", "\n");
         }
-
-//      //biarkan pakai integer id nya
-//       for (int i = 0; i < arrayForeignKey.size(); i++) {
-//            pattern = Pattern.compile("`" + arrayForeignKey.get(i) + "`" + " integer");
-//            matcher = pattern.matcher(tableQuery);
-//            while (matcher.find()) {
-//                String field = matcher.group(0);
-//                tableQuery = tableQuery.replaceAll(field, field.replaceAll("integer", "text(255)"));
-//            }
-//        }
 
         pattern = Pattern.compile(",\\s*\\)");
         matcher = pattern.matcher(tableQuery);

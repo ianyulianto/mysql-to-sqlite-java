@@ -10,7 +10,6 @@ import java.math.BigDecimal;
 import java.sql.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -18,18 +17,21 @@ import java.util.concurrent.Future;
 public class MysqlToSqliteBuilder {
 
     private static final int READ_BATCH_SIZE = 1000;
-    private static final int WRITE_BATCH_SIZE = 100;
-
-    private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    private final ExecutorService executor;
 
     private final DataSource dataSource;
     private final File sqliteOutput;
 
     private String excludeTableRegex;
+    private String excludeDataTableRegex;
+    private String defaultOrderByQuery;
+    private Map<String, String> additonalWhereQuery = new HashMap<>();
+    private Map<String, String> orderByQuery = new HashMap<>();
 
-    public MysqlToSqliteBuilder(DataSource dataSource, File sqliteOutput) {
+    public MysqlToSqliteBuilder(DataSource dataSource, File sqliteOutput, int threadCount) {
         this.dataSource = dataSource;
         this.sqliteOutput = sqliteOutput;
+        executor = Executors.newFixedThreadPool(threadCount);
     }
 
     public MysqlToSqliteBuilder withExcludeTableReqex(String regex) {
@@ -37,21 +39,57 @@ public class MysqlToSqliteBuilder {
         return this;
     }
 
+    public MysqlToSqliteBuilder withExcludeDataTableRegex(String regex) {
+        this.excludeDataTableRegex = regex;
+        return this;
+    }
+
+    public MysqlToSqliteBuilder withAdditionalWhereQuery(Map<String, String> whereQuery) {
+        this.additonalWhereQuery.putAll(whereQuery);
+        return this;
+    }
+
+    public MysqlToSqliteBuilder addAdditionalWhereQuery(String tableName, String whereQuery) {
+        this.additonalWhereQuery.put(tableName, whereQuery);
+        return this;
+    }
+
+    public MysqlToSqliteBuilder withOrderByQuery(Map<String, String> orderBy) {
+        this.orderByQuery.putAll(orderBy);
+        return this;
+    }
+
+    public MysqlToSqliteBuilder addOrderByQuery(String tableName, String orderBy) {
+        this.orderByQuery.put(tableName, orderBy);
+        return this;
+    }
+
+    public MysqlToSqliteBuilder withDefaultOrderByQuery(String defaultOrderByQuery) {
+        this.defaultOrderByQuery = defaultOrderByQuery;
+        return this;
+    }
+
     public File convert() throws SqlJetException {
         List<String> tables = this.getAllTables();
-        tables.remove("ir_model_relation");
+
+        //  Remove Excluded Table
+        for ( Iterator<String> it = tables.iterator(); it.hasNext(); ) {
+            final String tableName = it.next();
+
+            if ( excludeTableRegex != null &&
+                    tableName.matches(excludeTableRegex) ) {
+                it.remove();
+            }
+        }
 
         //  Prepare SQLite File
         try ( final Sqlite sqlite = Sqlite.create(sqliteOutput) ) {
 
             //  List all Tables
             for ( String tableName : tables ) {
-                if ( tableName.equals("ir_model_relation") ) {
-                    continue;
-                }
+
 
                 //  SHOW Create Schema
-                System.out.println("Convert Table: " + tableName);
                 final String createSchemaQuery = this.getCreateSchema(tableName);
 
                 //  Create Table in Sqlite
@@ -62,8 +100,14 @@ public class MysqlToSqliteBuilder {
             throw new RuntimeException(e);
         }
 
+        //  Insert Data to Sqlite
         try ( final Sqlite sqlite = Sqlite.open(sqliteOutput) ) {
             for ( String tableName : tables ) {
+                if ( excludeDataTableRegex != null &&
+                        tableName.matches(excludeDataTableRegex) ) {
+                    continue;
+                }
+
                 this.appendAllData(sqlite, tableName);
             }
         }
@@ -76,8 +120,15 @@ public class MysqlToSqliteBuilder {
 
     private void appendAllData(Sqlite sqlite, String tableName) {
 
+        //  Where Query & Order By
+        final String whereQuery = this.additonalWhereQuery.get(tableName);
+        String orderBy = this.orderByQuery.get(tableName);
+        if ( orderBy == null || orderBy.trim().isEmpty() ) {
+            orderBy = defaultOrderByQuery;
+        }
+
         //  Get Data Count
-        final int dataCount = this.getTableDataCount(tableName);
+        final int dataCount = this.getTableDataCount(tableName, whereQuery);
 
         //  Preparing Batch Process
         final int pageCount = dataCount / READ_BATCH_SIZE + 1;
@@ -86,7 +137,9 @@ public class MysqlToSqliteBuilder {
         List<Future> futures = new ArrayList<>();
         for ( int i = 0; i < pageCount; i++ ) {
             DataFetchExecutor callable =
-                    new DataFetchExecutor(dataSource, tableName, i, sqlite);
+                    new DataFetchExecutor(dataSource, tableName, i, sqlite)
+                    .withAdditionalWhereQuery(whereQuery)
+                    .withOrderBy(orderBy);
 
             Future future = executor.submit(callable);
             futures.add(future);
@@ -111,12 +164,20 @@ public class MysqlToSqliteBuilder {
 
     }
 
-    private int getTableDataCount(String tableName) {
+    private int getTableDataCount(String tableName, String additionalWhereQuery) {
         final Sql2o sql2o = new Sql2o(dataSource);
+
+        //  Resolve Additional Where Query
+        String whereQuery = "1=1";
+        if ( additionalWhereQuery != null &&
+                !additionalWhereQuery.trim().isEmpty() ) {
+            whereQuery = " (" + additionalWhereQuery + ") ";
+        }
 
         final int count;
         try ( org.sql2o.Connection conn = sql2o.open() ) {
-            String countQ = "select count(1) from " + tableName;
+            String countQ = "select count(1) from " + tableName +
+                    " WHERE " + whereQuery;
             count = conn.createQuery(countQ).executeScalar(Integer.class);
         }
 
@@ -178,6 +239,9 @@ public class MysqlToSqliteBuilder {
         private final int index;
         private final Sqlite sqlite;
 
+        private String additionalWhereQuery;
+        private String orderBy;
+
         private DataFetchExecutor(DataSource ds, String tableName, int index, Sqlite sqlite) {
             this.ds = ds;
             this.tableName = tableName;
@@ -185,12 +249,38 @@ public class MysqlToSqliteBuilder {
             this.sqlite = sqlite;
         }
 
+        private DataFetchExecutor withAdditionalWhereQuery(String additionalWhereQuery) {
+            this.additionalWhereQuery = additionalWhereQuery;
+            return this;
+        }
+
+        private DataFetchExecutor withOrderBy(String orderBy) {
+            this.orderBy = orderBy;
+            return this;
+        }
+
         @Override
         public void run() {
             final Sql2o sql2o = new Sql2o(ds);
 
+            //  Resolve Additional Where Query
+            String whereQuery = "1=1";
+            if ( additionalWhereQuery != null &&
+                    !additionalWhereQuery.trim().isEmpty() ) {
+                whereQuery = " (" + additionalWhereQuery + ") ";
+            }
+
+            //  Resolve Order By
+            String orderByQuery = "";
+            if ( this.orderBy != null &&
+                    !this.orderBy.trim().isEmpty() ) {
+                orderByQuery = " ORDER BY " + this.orderBy + " ";
+            }
+
             final String query =
                     "select * from " + tableName +
+                    " WHERE " + whereQuery +
+                    orderByQuery +
                     " LIMIT " + READ_BATCH_SIZE +
                     " OFFSET " + (index * READ_BATCH_SIZE);
 
@@ -203,6 +293,7 @@ public class MysqlToSqliteBuilder {
             }
 
             //  Masukkan ke Sqlite
+            System.out.println("Insert into table: " + tableName + "; Index: " + index);
             insertTransaction(sqlite, tableName, res);
         }
 
