@@ -71,6 +71,22 @@ public class Sqlite implements Closeable {
         }
     }
 
+    public void executeAlter(String... queries) throws SqlJetException {
+        if ( closed ) {
+            throw new RuntimeException("Sqlite was closed!");
+        }
+
+        try {
+            db.beginTransaction(SqlJetTransactionMode.WRITE);
+            for ( String query : queries ) {
+                db.alterTable(query);
+            }
+        }
+        finally {
+            db.commit();
+        }
+    }
+
     public void insertTransactional(String tableName, List<Map<String, Object>> values) throws SqlJetException {
         if ( closed ) {
             throw new RuntimeException("Sqlite was closed!");

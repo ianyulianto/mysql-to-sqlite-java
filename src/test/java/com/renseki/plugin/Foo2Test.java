@@ -1,8 +1,5 @@
 package com.renseki.plugin;
 
-import com.google.gson.FieldNamingPolicy;
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import org.sql2o.Sql2o;
 import org.testng.annotations.Test;
 
@@ -10,7 +7,7 @@ import javax.sql.DataSource;
 import java.io.File;
 
 public class Foo2Test {
-    Gson GSON = (new GsonBuilder()).setDateFormat("yyyy-MM-dd HH:mm:ss").setPrettyPrinting().setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES).create();
+
 
     @Test
     public void test() throws Exception {
