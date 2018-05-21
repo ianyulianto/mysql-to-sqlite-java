@@ -46,18 +46,18 @@ public class MysqlToSqliteBuilder {
         int columns = md.getColumnCount();
         List<Map<String, Object>> rows = new ArrayList<>();
         while (rs.next()){
-            Map<String, Object> row = new HashMap<>(columns);
+            Map<String, Object> row = new LinkedHashMap<>(columns);
             for(int i = 1; i <= columns; ++i){
 
                 Object value = rs.getObject(i);
-                row.put(md.getColumnLabel(i), value);
+                row.put(md.getColumnName(i), value);
             }
             rows.add(row);
         }
         return rows;
     }
 
-    private static final int READ_BATCH_SIZE = 1000;
+    private static final int READ_BATCH_SIZE = 300;
     private final ExecutorService executor;
 
     private final DataSource dataSource;
@@ -72,7 +72,7 @@ public class MysqlToSqliteBuilder {
     public MysqlToSqliteBuilder(DataSource dataSource, File sqliteOutput, int threadCount) {
         this.dataSource = dataSource;
         this.sqliteOutput = sqliteOutput;
-        executor = Executors.newFixedThreadPool(threadCount);
+        executor = Executors.newSingleThreadExecutor();
     }
 
     public MysqlToSqliteBuilder withExcludeTableReqex(String regex) {
